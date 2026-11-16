@@ -1,61 +1,94 @@
-// Starlight Salvage — keyboard and mouse input.
-// The game reads this one object; nothing else touches the DOM events.
-export function createInput(canvas) {
-  const input = {
-    keys: new Set(),
-    mouseX: 640,
-    mouseY: 400,
-    mouseDown: false,
-    // Edge-triggered presses, consumed once per frame by the game loop.
-    pressed: new Set(),
-    anyKey: false,
-  };
+// Input intents. The game never reads keys directly; it reads intents
+// (move axis, aim angle, flare, relight, pause, mute, restart), so the
+// core-loop verb is one mapping, testable without a keyboard.
 
-  const keyName = (e) => {
-    if (e.key === ' ') return 'Space';
-    if (e.key.length === 1) return e.key.toLowerCase();
-    return e.key;
-  };
+export function createInput(canvas) {
+  const keys = new Set();
+  const justPressed = new Set();
+  let mouseX = 640;
+  let mouseY = 300;
+  let mouseDown = false;
+  let mouseClicked = false;
+
+  function toCanvas(e) {
+    const r = canvas.getBoundingClientRect();
+    return {
+      x: ((e.clientX - r.left) / r.width) * 1280,
+      y: ((e.clientY - r.top) / r.height) * 720,
+    };
+  }
 
   window.addEventListener('keydown', (e) => {
-    const k = keyName(e);
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
       e.preventDefault();
     }
-    if (!e.repeat) {
-      input.pressed.add(k);
-      input.anyKey = true;
-    }
-    input.keys.add(k);
+    if (!e.repeat) justPressed.add(e.key.toLowerCase());
+    keys.add(e.key.toLowerCase());
   });
-  window.addEventListener('keyup', (e) => {
-    input.keys.delete(keyName(e));
-  });
-  window.addEventListener('blur', () => {
-    input.keys.clear();
-    input.mouseDown = false;
-  });
+  window.addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
+  window.addEventListener('blur', () => keys.clear());
 
   canvas.addEventListener('mousemove', (e) => {
-    const r = canvas.getBoundingClientRect();
-    input.mouseX = ((e.clientX - r.left) / r.width) * canvas.width;
-    input.mouseY = ((e.clientY - r.top) / r.height) * canvas.height;
+    const p = toCanvas(e);
+    mouseX = p.x;
+    mouseY = p.y;
   });
   canvas.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    input.mouseDown = true;
-    input.anyKey = true;
+    const p = toCanvas(e);
+    mouseX = p.x;
+    mouseY = p.y;
+    mouseDown = true;
+    mouseClicked = true;
   });
   window.addEventListener('mouseup', () => {
-    input.mouseDown = false;
+    mouseDown = false;
   });
-  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  input.down = (k) => input.keys.has(k);
-  input.wasPressed = (k) => input.pressed.has(k);
-  input.endFrame = () => {
-    input.pressed.clear();
-    input.anyKey = false;
+  return {
+    axisX() {
+      let x = 0;
+      if (keys.has('a') || keys.has('arrowleft')) x -= 1;
+      if (keys.has('d') || keys.has('arrowright')) x += 1;
+      return x;
+    },
+    axisY() {
+      let y = 0;
+      if (keys.has('w') || keys.has('arrowup')) y -= 1;
+      if (keys.has('s') || keys.has('arrowdown')) y += 1;
+      return y;
+    },
+    aimAngle(fromX, fromY) {
+      return Math.atan2(mouseY - fromY, mouseX - fromX);
+    },
+    mouse() {
+      return { x: mouseX, y: mouseY };
+    },
+    // Edge-triggered, consumed once per frame by the game loop.
+    flarePressed() {
+      return mouseClicked || justPressed.has(' ') || mouseDown;
+    },
+    relightPressed() {
+      return justPressed.has('e');
+    },
+    pausePressed() {
+      return justPressed.has('p') || justPressed.has('escape');
+    },
+    mutePressed() {
+      return justPressed.has('m');
+    },
+    restartPressed() {
+      return justPressed.has('r');
+    },
+    confirmPressed() {
+      return justPressed.has('enter') || mouseClicked;
+    },
+    anyKey() {
+      return justPressed.size > 0 || mouseClicked;
+    },
+    // Called at the end of each frame: edge flags live exactly one frame.
+    endFrame() {
+      justPressed.clear();
+      mouseClicked = false;
+    },
   };
-  return input;
 }

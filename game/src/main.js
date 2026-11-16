@@ -1,103 +1,201 @@
-// Starlight Salvage — boot, fixed-timestep loop and state machine.
-// Title -> play -> upgrade -> ... -> victory / defeat, with pause and
-// restart. A ?shot= query renders one deterministic scene instead.
-import { createWorld, startRun, update, chooseUpgrade } from './world.js';
-import { render, upgradeCardAt } from './render.js';
+// EMBERKEEP — boot, fixed-timestep loop and state machine.
+// Title -> playing -> dawn -> ... -> victory / gameover, with pause and
+// restart. A ?shot= query renders one deterministic scene instead, and
+// ?selftest=1 plays the game headlessly and reports every check.
+
+import { CFG } from './config.js';
+import { createRng } from './rng.js';
 import { createInput } from './input.js';
 import { createAudio } from './audio.js';
-import { setupShot } from './shots.js';
+import { createFeel } from './feel.js';
+import { createKeeper } from './keeper.js';
+import {
+  createWorld,
+  startNight,
+  updateWorld,
+  updateAmbient,
+  lightAt,
+  lightSources,
+  nearestDarkLamp,
+  relightLamp,
+  fireFlare,
+} from './world.js';
+import { createRenderer } from './render.js';
+import { setupShot, runSelftest } from './shots.js';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
-const input = createInput(canvas);
-const audio = createAudio();
 const params = new URLSearchParams(window.location.search);
+const seed = Number(params.get('seed') || 7);
 const shotName = params.get('shot');
-const seed = Number(params.get('seed') || '7');
+const selftest = params.get('selftest') === '1';
 
-function fitCanvas() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+const rng = createRng(seed);
+const input = createInput(canvas);
+const audio = createAudio(rng);
+const feel = createFeel(rng);
+const renderer = createRenderer(canvas);
+const statusEl = document.getElementById('status');
+
+const game = {
+  cfg: CFG,
+  rng,
+  input,
+  audio,
+  feel,
+  keeper: createKeeper(CFG, rng),
+  world: createWorld(seed),
+  time: 0,
+  state: 'title',
+  best: 0,
+  loseReason: null,
+  selftest: null,
+};
+
+try {
+  game.best = Number(window.localStorage.getItem('emberkeep-best') || 0);
+} catch {
+  game.best = 0;
 }
 
+game.lightAt = (x, y) => lightAt(game, x, y);
+game.lightSources = () => lightSources(game);
+game.nearestDarkLamp = (x, y, r) => nearestDarkLamp(game, x, y, r);
+game.relightLamp = (lamp) => relightLamp(game, lamp);
+game.fireFlare = (x, y, a) => fireFlare(game, x, y, a);
+
+game.onKeeperHurt = () => {
+  audio.hurt();
+  feel.addTrauma(CFG.feel.traumaHurt);
+  feel.hitstop(CFG.feel.hitstopHurt);
+};
+
+game.onLampSnuffed = () => {
+  // The lamp's own burnout is handled in world.js; a creeper's snuff
+  // gets the same sound there. Nothing extra to do here.
+};
+
+game.onBeaconHit = () => {
+  game.world.beaconIntegrity -= CFG.beacon.hitDmg;
+  audio.thud();
+  feel.addTrauma(CFG.feel.traumaBeaconHit);
+  feel.hitstop(CFG.feel.hitstopBeacon);
+  if (game.world.beaconIntegrity <= 0) game.lose('snuffed');
+};
+
+game.saveBest = () => {
+  if (game.world.score > game.best) {
+    game.best = game.world.score;
+    try {
+      window.localStorage.setItem('emberkeep-best', String(game.best));
+    } catch {
+      // storage unavailable; the best score just does not persist
+    }
+  }
+};
+
+game.lose = (reason) => {
+  if (game.state === 'gameover' || game.state === 'victory') return;
+  game.loseReason = reason;
+  game.state = 'gameover';
+  game.saveBest();
+  audio.stopHum();
+};
+
+game.win = () => {
+  if (game.state === 'victory') return;
+  game.state = 'victory';
+  game.world.score += 1000 + Math.round(game.world.beaconIntegrity) * 5;
+  game.saveBest();
+  audio.dawn();
+  audio.stopHum();
+  feel.flash(0.5);
+};
+
+game.startRun = () => {
+  game.world = createWorld(seed);
+  game.keeper = createKeeper(CFG, rng);
+  game.time = 0;
+  game.loseReason = null;
+  game.state = 'playing';
+  audio.ensure();
+  audio.startHum();
+  startNight(game, 1);
+};
+
+function setStatus(text) {
+  if (statusEl) statusEl.textContent = text;
+}
+
+// One fixed step. The render loop calls this at 60 Hz; the selftest
+// calls it directly. Input edges are consumed here, once per step.
+game.step = (dt) => {
+  game.time += dt;
+
+  if (input.mutePressed()) audio.setMuted(!audio.muted);
+
+  if (game.state === 'title') {
+    updateAmbient(dt, game);
+    if (input.confirmPressed()) game.startRun();
+  } else if (game.state === 'playing' || game.state === 'dawn') {
+    if (input.pausePressed()) {
+      game.state = 'paused';
+    } else {
+      const gdt = feel.gameplayDelta(dt);
+      game.keeper.update(gdt, game);
+      updateWorld(gdt, game);
+    }
+    if (input.restartPressed()) game.startRun();
+  } else if (game.state === 'paused') {
+    if (input.pausePressed() || input.confirmPressed()) game.state = 'playing';
+    else if (input.restartPressed()) game.startRun();
+  } else if (game.state === 'gameover' || game.state === 'victory') {
+    updateAmbient(dt, game);
+    if (input.restartPressed() || input.confirmPressed()) game.startRun();
+  }
+
+  feel.update(dt);
+  audio.setDuck(feel.ducked ? 0.6 : 1);
+  input.endFrame();
+
+  if (game.state === 'playing') {
+    setStatus(`Night ${game.world.night} of ${CFG.NIGHTS}. Keeper health ${Math.round(game.keeper.hp)}, oil ${Math.round(game.keeper.fuel)}, score ${game.world.score}.`);
+  } else if (game.state === 'title') {
+    setStatus('Emberkeep. Seven nights of the Beacon. Press Enter to begin.');
+  }
+};
+
+function render() {
+  renderer.draw(game);
+}
+
+window.__emberkeep = { game, render };
+
 if (shotName) {
-  // Screenshot mode: fixed 1280x800 stage, one deterministic scene.
-  canvas.width = 1280;
-  canvas.height = 800;
-  const world = setupShot(shotName, seed, update);
-  // Render in the game's own 1280x800 coordinate space.
-  render(ctx, world);
+  // One deterministic frame, then stop: the harness screenshots it.
+  setupShot(game, shotName, seed);
+  render();
+  window.__shotReady = true;
+} else if (selftest) {
+  runSelftest(game, render);
+  render();
 } else {
-  fitCanvas();
-  window.addEventListener('resize', fitCanvas);
-  const world = createWorld((Math.random() * 1e9) | 0);
   let last = performance.now();
   let acc = 0;
   const STEP = 1 / 60;
-
   function frame(now) {
-    requestAnimationFrame(frame);
-    const dt = Math.min(0.1, (now - last) / 1000);
+    const frameDt = Math.min(0.1, (now - last) / 1000);
     last = now;
-
-    // --- state transitions, from edge-triggered input ---
-    if (input.wasPressed('m')) {
-      const muted = audio.toggleMute();
-      if (!muted) audio.startMusic();
-    }
-    if (world.state === 'title') {
-      if (input.wasPressed('Enter') || input.mouseDown) {
-        audio.unlock();
-        audio.startMusic();
-        startRun(world);
-      }
-    } else if (world.state === 'play') {
-      if (input.wasPressed('p')) {
-        world.state = 'paused';
-      }
-      if (input.wasPressed('r')) startRun(world);
-    } else if (world.state === 'paused') {
-      if (input.wasPressed('p') || input.wasPressed('Enter')) world.state = 'play';
-      if (input.wasPressed('r')) startRun(world);
-    } else if (world.state === 'upgrade') {
-      if (input.wasPressed('1')) chooseUpgrade(world, 0, audio);
-      else if (input.wasPressed('2')) chooseUpgrade(world, 1, audio);
-      else if (input.wasPressed('3')) chooseUpgrade(world, 2, audio);
-      else if (input.mouseDown) {
-        const card = upgradeCardAt(input.mouseX, input.mouseY);
-        if (card >= 0) chooseUpgrade(world, card, audio);
-      }
-      // Hover highlight follows the mouse.
-      const card = upgradeCardAt(input.mouseX, input.mouseY);
-      if (card >= 0) world.choiceIndex = card;
-    } else if (world.state === 'victory' || world.state === 'defeat') {
-      if (input.wasPressed('r') || input.wasPressed('Enter')) {
-        audio.startMusic();
-        startRun(world);
-      }
-    }
-
-    // --- fixed-step simulation, then one render ---
-    acc += dt;
+    acc += frameDt;
     let guard = 0;
     while (acc >= STEP && guard < 5) {
-      update(world, input, audio, STEP);
+      game.step(STEP);
       acc -= STEP;
-      guard += 1;
+      guard++;
     }
     if (guard === 5) acc = 0;
-
-    // The canvas fills the window; the game draws in a 1280x800 space
-    // scaled to fit, letterboxed so the playfield never stretches.
-    const scale = Math.min(canvas.width / 1280, canvas.height / 800);
-    const ox = (canvas.width - 1280 * scale) / 2;
-    const oy = (canvas.height - 800 * scale) / 2;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#070b1e';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.setTransform(scale, 0, 0, scale, ox, oy);
-    render(ctx, world);
-    input.endFrame();
+    render();
+    requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
 }
