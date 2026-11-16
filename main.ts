@@ -1,4 +1,4 @@
-// Starlight Salvage — the hand-in program (Node 22, standard library only).
+// EMBERKEEP — the hand-in program (Node 22, standard library only).
 // The game is plain static files under game/ (game/index.html and its ES
 // modules, no library, no network request) and the screenshots under
 // screenshots/. This program copies both into /output and writes

@@ -1,6 +1,7 @@
-// A tiny static server for game/ (Node 22, standard library only), so the
-// game can be played locally without a build step: `node serve.ts` serves
-// game/ on http://localhost:8080. Development convenience only.
+// A tiny static server for game/ (Node 22, standard library only), so
+// the game can be played locally without a build step: `node serve.ts`
+// serves game/ on http://localhost:8080. Development convenience only;
+// nothing here ships with the entry.
 import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
