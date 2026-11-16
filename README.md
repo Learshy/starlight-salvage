@@ -1,8 +1,8 @@
 # EMBERKEEP — Seven Nights of the Beacon
 
 [![make.fun · best-game-01](https://make.fun/badge/best-game-01.svg)](https://make.fun/bounty/best-game-01?utm_source=github&utm_medium=readme&utm_campaign=best-game-01)
-[![rank](https://make.fun/badge/best-game-01/Learshy/best-game-01/rank.svg)](https://make.fun/bounty/best-game-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=best-game-01)
-[![reward](https://make.fun/badge/best-game-01/Learshy/best-game-01/reward.svg)](https://make.fun/bounty/best-game-01?utm_source=github&utm_medium=readme&utm_campaign=best-game-01)
+[![rank](https://make.fun/badge/best-game-01/Learshy/starlight-salvage/rank.svg)](https://make.fun/bounty/best-game-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=best-game-01)
+[![reward](https://make.fun/badge/best-game-01/Learshy/starlight-salvage/reward.svg)](https://make.fun/bounty/best-game-01?utm_source=github&utm_medium=readme&utm_campaign=best-game-01)
 
 **Light is your only weapon.** You are the Keeper of the last Beacon on a
 small night island. For seven nights the dark sends its shades to snuff the
