@@ -1,20 +1,19 @@
-// Input intents. The game never reads keys directly; it reads intents
-// (move axis, aim angle, flare, relight, pause, mute, restart), so the
-// core-loop verb is one mapping, testable without a keyboard.
+// INKLIGHT — input: keyboard and mouse, read by the game every frame.
+// The canvas is scaled by CSS to fit the window, so mouse coordinates are
+// converted back into the 1280x720 logical playfield here, in one place.
+
+import { VIEW_W, VIEW_H } from './config.js';
 
 export function createInput(canvas) {
   const keys = new Set();
-  const justPressed = new Set();
-  let mouseX = 640;
-  let mouseY = 300;
-  let mouseDown = false;
-  let mouseClicked = false;
+  const mouse = { x: VIEW_W / 2, y: VIEW_H / 2, down: false, clicked: false };
+  let anyKey = false;
 
-  function toCanvas(e) {
+  function toLogical(clientX, clientY) {
     const r = canvas.getBoundingClientRect();
     return {
-      x: ((e.clientX - r.left) / r.width) * 1280,
-      y: ((e.clientY - r.top) / r.height) * 720,
+      x: ((clientX - r.left) / r.width) * VIEW_W,
+      y: ((clientY - r.top) / r.height) * VIEW_H,
     };
   }
 
@@ -22,73 +21,74 @@ export function createInput(canvas) {
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
       e.preventDefault();
     }
-    if (!e.repeat) justPressed.add(e.key.toLowerCase());
     keys.add(e.key.toLowerCase());
+    anyKey = true;
   });
   window.addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
   window.addEventListener('blur', () => keys.clear());
 
   canvas.addEventListener('mousemove', (e) => {
-    const p = toCanvas(e);
-    mouseX = p.x;
-    mouseY = p.y;
+    const p = toLogical(e.clientX, e.clientY);
+    mouse.x = p.x;
+    mouse.y = p.y;
   });
   canvas.addEventListener('mousedown', (e) => {
-    const p = toCanvas(e);
-    mouseX = p.x;
-    mouseY = p.y;
-    mouseDown = true;
-    mouseClicked = true;
+    if (e.button !== 0) return;
+    const p = toLogical(e.clientX, e.clientY);
+    mouse.x = p.x;
+    mouse.y = p.y;
+    mouse.down = true;
+    mouse.clicked = true;
   });
-  window.addEventListener('mouseup', () => {
-    mouseDown = false;
+  window.addEventListener('mouseup', (e) => {
+    if (e.button === 0) mouse.down = false;
+  });
+  // Keep the brush on the canvas when the pointer leaves and comes back.
+  canvas.addEventListener('mouseleave', () => {
+    mouse.down = false;
   });
 
   return {
-    axisX() {
+    // Held keys: WASD and the arrow keys both steer the painter.
+    axis() {
       let x = 0;
+      let y = 0;
       if (keys.has('a') || keys.has('arrowleft')) x -= 1;
       if (keys.has('d') || keys.has('arrowright')) x += 1;
-      return x;
-    },
-    axisY() {
-      let y = 0;
       if (keys.has('w') || keys.has('arrowup')) y -= 1;
       if (keys.has('s') || keys.has('arrowdown')) y += 1;
-      return y;
+      if (x !== 0 && y !== 0) {
+        const inv = 1 / Math.hypot(x, y);
+        x *= inv;
+        y *= inv;
+      }
+      return { x, y };
     },
-    aimAngle(fromX, fromY) {
-      return Math.atan2(mouseY - fromY, mouseX - fromX);
-    },
-    mouse() {
-      return { x: mouseX, y: mouseY };
-    },
-    // Edge-triggered, consumed once per frame by the game loop.
-    flarePressed() {
-      return mouseClicked || justPressed.has(' ') || mouseDown;
-    },
-    relightPressed() {
-      return justPressed.has('e');
-    },
-    pausePressed() {
-      return justPressed.has('p') || justPressed.has('escape');
+    dashPressed() {
+      return keys.has(' ');
     },
     mutePressed() {
-      return justPressed.has('m');
+      return keys.has('m');
+    },
+    pausePressed() {
+      return keys.has('p');
     },
     restartPressed() {
-      return justPressed.has('r');
+      return keys.has('r');
     },
-    confirmPressed() {
-      return justPressed.has('enter') || mouseClicked;
+    // True once after any key or click, then cleared by the game.
+    consumeAnyKey() {
+      const v = anyKey || mouse.clicked;
+      anyKey = false;
+      mouse.clicked = false;
+      return v;
     },
-    anyKey() {
-      return justPressed.size > 0 || mouseClicked;
+    consumeClick() {
+      const v = mouse.clicked;
+      mouse.clicked = false;
+      return v;
     },
-    // Called at the end of each frame: edge flags live exactly one frame.
-    endFrame() {
-      justPressed.clear();
-      mouseClicked = false;
-    },
+    mouse,
+    keys,
   };
 }
